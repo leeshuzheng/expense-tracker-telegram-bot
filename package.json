@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
-    "build": "tsc"
+    "start": "npx tsx src/index.ts",
+    "build": "echo 'no build step'"
   },
   "dependencies": {
     "node-telegram-bot-api": "^0.66.0",
