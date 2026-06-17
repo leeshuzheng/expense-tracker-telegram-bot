@@ -1,4 +1,8 @@
-import "dotenv/config";
+// only load dotenv in local dev
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config();
+}
+
 import TelegramBot from "node-telegram-bot-api";
 import { appendExpenseRow } from "./sheets";
 import { CATEGORIES, type Session, type Step, type PaidBy, type Category } from "./types";
