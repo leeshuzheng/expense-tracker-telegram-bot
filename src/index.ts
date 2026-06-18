@@ -1,13 +1,7 @@
-// only load dotenv in local dev
-if (process.env.NODE_ENV !== "production") {
-  require("dotenv").config();
-}
-
+import "dotenv/config";
 import TelegramBot from "node-telegram-bot-api";
 import { appendExpenseRow } from "./sheets";
-import { CATEGORIES, type Session, type Step, type PaidBy, type Category } from "./types";
-import "dotenv/config";
-
+import { CATEGORIES, type Session, type PaidBy, type Category } from "./types";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const ALLOWED_CHAT_IDS = process.env.ALLOWED_CHAT_IDS!
@@ -15,14 +9,10 @@ const ALLOWED_CHAT_IDS = process.env.ALLOWED_CHAT_IDS!
   .map((id) => Number(id.trim()));
 
 const bot = new TelegramBot(TOKEN, { polling: true });
-
-// In-memory session store — fine for 2 users
 const sessions = new Map<number, Session>();
 
 function getSession(chatId: number): Session {
-  if (!sessions.has(chatId)) {
-    sessions.set(chatId, { step: "idle" });
-  }
+  if (!sessions.has(chatId)) sessions.set(chatId, { step: "idle" });
   return sessions.get(chatId)!;
 }
 
@@ -38,7 +28,6 @@ function isAllowed(chatId: number): boolean {
   return ALLOWED_CHAT_IDS.includes(chatId);
 }
 
-// Split categories into rows of 2 for the inline keyboard
 function categoryKeyboard(): TelegramBot.InlineKeyboardMarkup {
   const rows: TelegramBot.InlineKeyboardButton[][] = [];
   for (let i = 0; i < CATEGORIES.length; i += 2) {
@@ -55,24 +44,20 @@ function categoryKeyboard(): TelegramBot.InlineKeyboardMarkup {
 
 function paidByKeyboard(): TelegramBot.InlineKeyboardMarkup {
   return {
-    inline_keyboard: [
-      [
-        { text: "Joint", callback_data: "paid:Joint" },
-        { text: "Hadi", callback_data: "paid:Hadi" },
-        { text: "Chris", callback_data: "paid:Chris" },
-      ],
-    ],
+    inline_keyboard: [[
+      { text: "Joint", callback_data: "paid:Joint" },
+      { text: "Hadi", callback_data: "paid:Hadi" },
+      { text: "Chris", callback_data: "paid:Chris" },
+    ]],
   };
 }
 
 function confirmKeyboard(): TelegramBot.InlineKeyboardMarkup {
   return {
-    inline_keyboard: [
-      [
-        { text: "✓ log it", callback_data: "confirm:yes" },
-        { text: "✗ cancel", callback_data: "confirm:no" },
-      ],
-    ],
+    inline_keyboard: [[
+      { text: "✓ log it", callback_data: "confirm:yes" },
+      { text: "✗ cancel", callback_data: "confirm:no" },
+    ]],
   };
 }
 
@@ -84,61 +69,109 @@ function summaryText(session: Session): string {
     `amount: $${session.amount?.toFixed(2)}`,
     `paid by: ${session.paidBy}`,
     `category: ${session.category}`,
-    `refund/extra: ${session.refund != null ? `$${session.refund.toFixed(2)}` : "none"}`,
   ].join("\n");
 }
 
-async function askNotes(chatId: number): Promise<void> {
+// ── step-by-step helpers ──────────────────────────────────────────
+
+async function askNotes(chatId: number) {
   await bot.sendMessage(chatId, "what are you logging?");
 }
 
-async function askAmount(chatId: number): Promise<void> {
+async function askAmount(chatId: number) {
   await bot.sendMessage(chatId, "how much? (SGD)");
 }
 
-async function askPaidBy(chatId: number): Promise<void> {
-  await bot.sendMessage(chatId, "who paid?", {
-    reply_markup: paidByKeyboard(),
-  });
+async function askPaidBy(chatId: number) {
+  await bot.sendMessage(chatId, "who paid?", { reply_markup: paidByKeyboard() });
 }
 
-async function askCategory(chatId: number): Promise<void> {
-  await bot.sendMessage(chatId, "which category?", {
-    reply_markup: categoryKeyboard(),
-  });
+async function askCategory(chatId: number) {
+  await bot.sendMessage(chatId, "which category?", { reply_markup: categoryKeyboard() });
 }
 
-async function askRefund(chatId: number): Promise<void> {
-  await bot.sendMessage(chatId, "any refund or extra amount? (type a number or 'skip')");
-}
-
-async function askConfirm(chatId: number, session: Session): Promise<void> {
+async function askConfirm(chatId: number, session: Session) {
   await bot.sendMessage(chatId, summaryText(session), {
     parse_mode: "Markdown",
     reply_markup: confirmKeyboard(),
   });
 }
 
-// Handle /log or /start
+// ── /log — step-by-step ───────────────────────────────────────────
+
 bot.onText(/\/(log|start)/, async (msg) => {
   const chatId = msg.chat.id;
   if (!isAllowed(chatId)) return;
-
   resetSession(chatId);
   setSession(chatId, { step: "awaiting_notes" });
   await askNotes(chatId);
 });
 
-// Handle /cancel
-bot.onText(/\/cancel/, async (msg) => {
+// ── /q — quick format: /q price, notes, category, person ─────────
+
+bot.onText(/\/q (.+)/, async (msg, match) => {
   const chatId = msg.chat.id;
   if (!isAllowed(chatId)) return;
 
+  const parts = match?.[1].split(",").map((s) => s.trim());
+  if (!parts || parts.length < 4) {
+    await bot.sendMessage(chatId, "format: /q price, notes, category, person\ne.g. /q 12.50, lunch, Dining out, Hadi");
+    return;
+  }
+
+  const [priceStr, notes, categoryRaw, personRaw] = parts;
+  const amount = parseFloat(priceStr);
+
+  if (isNaN(amount) || amount <= 0) {
+    await bot.sendMessage(chatId, "invalid price. format: /q 12.50, lunch, Dining out, Hadi");
+    return;
+  }
+
+  // fuzzy match category (case-insensitive)
+  const category = CATEGORIES.find(
+    (c) => c.toLowerCase() === categoryRaw.toLowerCase()
+  );
+  if (!category) {
+    await bot.sendMessage(
+      chatId,
+      `unknown category: "${categoryRaw}"\n\nvalid categories:\n${CATEGORIES.join(", ")}`
+    );
+    return;
+  }
+
+  // fuzzy match paid by (case-insensitive)
+  const validPeople: PaidBy[] = ["Joint", "Hadi", "Chris"];
+  const paidBy = validPeople.find(
+    (p) => p.toLowerCase() === personRaw.toLowerCase()
+  );
+  if (!paidBy) {
+    await bot.sendMessage(chatId, `unknown person: "${personRaw}"\nvalid options: Joint, Hadi, Chris`);
+    return;
+  }
+
+  const session: Session = {
+    step: "awaiting_confirm",
+    notes,
+    amount,
+    paidBy,
+    category,
+  };
+
+  setSession(chatId, session);
+  await askConfirm(chatId, session);
+});
+
+// ── /cancel ───────────────────────────────────────────────────────
+
+bot.onText(/\/cancel/, async (msg) => {
+  const chatId = msg.chat.id;
+  if (!isAllowed(chatId)) return;
   resetSession(chatId);
   await bot.sendMessage(chatId, "cancelled. send /log to start again.");
 });
 
-// Handle free text messages
+// ── free text handler ─────────────────────────────────────────────
+
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   if (!isAllowed(chatId)) return;
@@ -168,29 +201,13 @@ bot.on("message", async (msg) => {
     return;
   }
 
-  if (session.step === "awaiting_refund") {
-    if (text.toLowerCase() === "skip") {
-      session.refund = undefined;
-    } else {
-      const refund = parseFloat(text.replace("$", ""));
-      if (isNaN(refund)) {
-        await bot.sendMessage(chatId, "please enter a valid number or 'skip'");
-        return;
-      }
-      session.refund = refund;
-    }
-    session.step = "awaiting_confirm";
-    setSession(chatId, session);
-    await askConfirm(chatId, session);
-    return;
-  }
-
   if (session.step === "idle") {
-    await bot.sendMessage(chatId, "send /log to log an expense.");
+    await bot.sendMessage(chatId, "send /log to log an expense, or /q for quick entry.");
   }
 });
 
-// Handle inline keyboard callbacks
+// ── callback handler ──────────────────────────────────────────────
+
 bot.on("callback_query", async (query) => {
   const chatId = query.message?.chat.id;
   if (!chatId || !isAllowed(chatId)) return;
@@ -198,7 +215,6 @@ bot.on("callback_query", async (query) => {
   const data = query.data ?? "";
   const session = getSession(chatId);
 
-  // Acknowledge the button press
   await bot.answerCallbackQuery(query.id);
 
   if (data.startsWith("paid:") && session.step === "awaiting_paid_by") {
@@ -211,9 +227,9 @@ bot.on("callback_query", async (query) => {
 
   if (data.startsWith("cat:") && session.step === "awaiting_category") {
     session.category = data.replace("cat:", "") as Category;
-    session.step = "awaiting_refund";
+    session.step = "awaiting_confirm";
     setSession(chatId, session);
-    await askRefund(chatId);
+    await askConfirm(chatId, session);
     return;
   }
 

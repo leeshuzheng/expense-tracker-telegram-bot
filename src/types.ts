@@ -39,7 +39,6 @@ export type Step =
   | "awaiting_amount"
   | "awaiting_paid_by"
   | "awaiting_category"
-  | "awaiting_refund"
   | "awaiting_confirm";
 
 export interface Session {

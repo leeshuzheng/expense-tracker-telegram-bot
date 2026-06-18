@@ -35,7 +35,6 @@ export async function appendExpenseRow(session: Session): Promise<void> {
     session.category ?? "",        // Category
     session.paidBy ?? "",          // Paid by
     session.amount ?? 0,           // Amount (SGD)
-    session.refund ?? "",          // Refund/Extra (blank if none)
     session.notes ?? "",           // Notes
     "Telegram",                    // Via
   ];
