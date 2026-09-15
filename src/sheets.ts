@@ -1,11 +1,18 @@
 import { google } from "googleapis";
 import type { Session } from "./types";
 
-const SHEET_ID = process.env.GOOGLE_SHEET_ID!;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME ?? "Sheet1";
+const SHEET_ID = (process.env.GOOGLE_SHEET_ID ?? "").split("#")[0].trim();
+const SHEET_NAME = (process.env.GOOGLE_SHEET_NAME ?? "Sheet1").split("#")[0].trim() || "Sheet1";
 
 function getAuth() {
-  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!);
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set");
+  let credentials: object;
+  try {
+    credentials = JSON.parse(raw);
+  } catch {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON");
+  }
   return new google.auth.GoogleAuth({
     credentials,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
@@ -39,9 +46,17 @@ export async function appendExpenseRow(session: Session): Promise<void> {
     "Telegram",                    // Via
   ];
 
+  if (!SHEET_ID) throw new Error("GOOGLE_SHEET_ID is not set");
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set");
+  }
+
+  // Quote sheet title so names with spaces/emoji parse correctly.
+  const range = `'${SHEET_NAME.replace(/'/g, "''")}'!A:H`;
+
   await sheets.spreadsheets.values.append({
     spreadsheetId: SHEET_ID,
-    range: `${SHEET_NAME}!A:H`,
+    range,
     valueInputOption: "USER_ENTERED",
     requestBody: { values: [row] },
   });

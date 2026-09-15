@@ -4,11 +4,23 @@ import TelegramBot from "node-telegram-bot-api";
 import { appendExpenseRow } from "./sheets";
 import { CATEGORIES, type Session, type PaidBy, type Category } from "./types";
 
-const TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
-const ALLOWED_CHAT_IDS = process.env.ALLOWED_CHAT_IDS!
+/** Strip inline `# comments` (dotenv does this; Fly secrets do not). */
+function envValue(name: string): string {
+  const raw = process.env[name];
+  if (!raw) throw new Error(`${name} is not set`);
+  return raw.split("#")[0].trim();
+}
+
+const TOKEN = envValue("TELEGRAM_BOT_TOKEN");
+const ALLOWED_CHAT_IDS = envValue("ALLOWED_CHAT_IDS")
   .split(",")
-  .map((id) => Number(id.trim()));
+  .map((id) => Number(id.trim()))
+  .filter((id) => !Number.isNaN(id));
 const PORT = Number(process.env.PORT) || 8080;
+
+if (ALLOWED_CHAT_IDS.length === 0) {
+  throw new Error("ALLOWED_CHAT_IDS has no valid chat ids");
+}
 
 // Fly (and similar hosts) health-check this port; the bot itself is polling-only.
 http.createServer((_req, res) => {
@@ -248,7 +260,8 @@ bot.on("callback_query", async (query) => {
         await bot.sendMessage(chatId, "✅ logged! send /log to add another.");
       } catch (err) {
         console.error("sheets error:", err);
-        await bot.sendMessage(chatId, "⚠️ something went wrong writing to the sheet. try again.");
+        const detail = err instanceof Error ? err.message : String(err);
+        await bot.sendMessage(chatId, `⚠️ sheets error: ${detail}`);
       }
     } else {
       await bot.sendMessage(chatId, "cancelled. send /log to start again.");
