@@ -1,4 +1,5 @@
 import "dotenv/config";
+import http from "http";
 import TelegramBot from "node-telegram-bot-api";
 import { appendExpenseRow } from "./sheets";
 import { CATEGORIES, type Session, type PaidBy, type Category } from "./types";
@@ -7,6 +8,13 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
 const ALLOWED_CHAT_IDS = process.env.ALLOWED_CHAT_IDS!
   .split(",")
   .map((id) => Number(id.trim()));
+const PORT = Number(process.env.PORT) || 8080;
+
+// Fly (and similar hosts) health-check this port; the bot itself is polling-only.
+http.createServer((_req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("ok");
+}).listen(PORT, "0.0.0.0");
 
 const bot = new TelegramBot(TOKEN, { polling: true });
 const sessions = new Map<number, Session>();
@@ -250,4 +258,4 @@ bot.on("callback_query", async (query) => {
   }
 });
 
-console.log("expense bot running...");
+console.log(`expense bot running on :${PORT}...`);
